@@ -23,7 +23,12 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { cn } from "@/lib/utils";
 import { IssueSubmittedDialog } from "./issue-submitted-dialog";
 import { states } from "@/lib/india-states-districts";
-import Map from "./map";
+import dynamic from 'next/dynamic';
+
+const Map = dynamic(() => import('./map'), {
+  ssr: false,
+  loading: () => <div className="h-full w-full bg-muted animate-pulse rounded-lg"></div>,
+});
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/use-auth";
 
