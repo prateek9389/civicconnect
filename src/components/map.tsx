@@ -1,4 +1,3 @@
-
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
@@ -45,61 +44,59 @@ const initLeafletIcons = () => {
   }
 };
 
-
 export default function Map({ location, path }: MapProps) {
-  // Skip rendering on server-side
+  // Initialize all hooks at the top level - ALWAYS call all hooks
   const [isClient, setIsClient] = useState(false);
+  const mapRef = useRef<L.Map | null>(null);
+  const markerRef = useRef<L.Marker | null>(null);
+  const polylineRef = useRef<L.Polyline | null>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
   
+  // Initialize client-side and Leaflet
   useEffect(() => {
     setIsClient(true);
     initLeafletIcons();
   }, []);
 
-  const mapRef = useRef<L.Map | null>(null);
-  const markerRef = useRef<L.Marker | null>(null);
-  const polylineRef = useRef<L.Polyline | null>(null);
-  const containerRef = useRef<HTMLDivElement>(null);
-
-  // Don't render map on server-side
-  if (!isClient) {
-    return <div className="h-full w-full bg-muted animate-pulse rounded-lg"></div>;
-  }
-
+  // Map initialization effect - ALWAYS call this hook
   useEffect(() => {
-    if (typeof window === 'undefined') return;
+    if (typeof window === 'undefined' || !containerRef.current || mapRef.current || !isClient) return;
+    
+    // Initialize map
+    mapRef.current = L.map(containerRef.current, {
+      zoomControl: true,
+      attributionControl: false,
+    }).setView([0, 0], 16);
 
-    // Initialize map only once
-    if (!mapRef.current && containerRef.current) {
-      mapRef.current = L.map(containerRef.current, {
-        zoomControl: true,
-        attributionControl: false,
-      }).setView([0, 0], 16);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19,
+    }).addTo(mapRef.current);
 
-      // Use a light theme map style
-      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        maxZoom: 19,
-      }).addTo(mapRef.current);
+    // Force a resize after initialization
+    setTimeout(() => {
+      if (mapRef.current) {
+        mapRef.current.invalidateSize();
+      }
+    }, 250);
+    
+    return () => {
+      if (mapRef.current) {
+        mapRef.current.remove();
+        mapRef.current = null;
+      }
+    };
+  }, [isClient]); // Add isClient as dependency
 
-      // Force a resize after initialization
-      setTimeout(() => {
-        if (mapRef.current) {
-          mapRef.current.invalidateSize();
-        }
-      }, 250);
-    }
-
-  }, []);
-
-  // Update map when location changes
+  // Update map when location changes - ALWAYS call this hook
   useEffect(() => {
-    if (!mapRef.current || !location) return;
+    if (!mapRef.current || !location || !isClient) return;
 
     // Force a resize to ensure proper display
-     setTimeout(() => {
-        if (mapRef.current) {
-          mapRef.current.invalidateSize();
-        }
-      }, 100);
+    setTimeout(() => {
+      if (mapRef.current) {
+        mapRef.current.invalidateSize();
+      }
+    }, 100);
 
     // Update map view with smooth animation
     mapRef.current.setView([location.lat, location.lng], 16, {
@@ -133,17 +130,12 @@ export default function Map({ location, path }: MapProps) {
         }).addTo(mapRef.current);
       }
     }
-  }, [location, path]);
+  }, [location, path, isClient]); // Add isClient as dependency
 
-  // Cleanup on unmount
-  useEffect(() => {
-    return () => {
-      if (mapRef.current) {
-        mapRef.current.remove();
-        mapRef.current = null;
-      }
-    };
-  }, []);
+  // Move the conditional render AFTER all hooks are called
+  if (!isClient) {
+    return <div className="h-full w-full bg-muted animate-pulse rounded-lg"></div>;
+  }
 
   return (
     <div 
@@ -152,5 +144,3 @@ export default function Map({ location, path }: MapProps) {
     />
   );
 }
-
-    
