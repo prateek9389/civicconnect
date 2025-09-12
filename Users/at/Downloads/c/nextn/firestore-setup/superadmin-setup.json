@@ -1,0 +1,10 @@
+{
+  "admins": {
+    "IXgGghGWNhYkXgk8mV7TqWd4s1f2": {
+      "email": "rohitsengar02@gmail.com",
+      "name": "Super Admin",
+      "role": "superadmin",
+      "status": "approved"
+    }
+  }
+}

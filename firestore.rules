@@ -1,0 +1,78 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ---------- Helper Functions ----------
+    // Check if the user is a Super Admin by checking their UID against a stored value.
+    function isSuperAdminByUID() {
+      return exists(/databases/$(database)/documents/config/superadmin) &&
+             get(/databases/$(database)/documents/config/superadmin).data.uid == request.auth.uid;
+    }
+    
+    // Legacy function for role-based super admin check (can be used alongside or phased out)
+    function isSuperAdminByRole() {
+      return exists(/databases/$(database)/documents/admins/$(request.auth.uid)) &&
+             get(/databases/$(database)/documents/admins/$(request.auth.uid)).data.role == 'superadmin';
+    }
+
+    // Check if the user is an approved Admin
+    function isAdmin() {
+      return exists(/databases/$(database)/documents/admins/$(request.auth.uid)) &&
+             get(/databases/$(database)/documents/admins/$(request.auth.uid)).data.status == 'approved';
+    }
+
+    // ---------- Config Collection ----------
+    match /config/{docId} {
+      allow read: if true;
+      allow write: if isSuperAdminByUID(); // Only super admin can change config
+    }
+    
+    // ---------- Admins Collection ----------
+    match /admins/{adminId} {
+      allow read: if request.auth != null;
+      allow create: if request.auth.uid == adminId;
+      // Super admin can update any admin document (e.g., to approve/reject)
+      allow update: if isSuperAdminByUID();
+      allow delete: if false;
+    }
+
+    // ---------- Users Collection ----------
+    match /users/{userId} {
+      allow read: if request.auth != null;
+      allow write: if request.auth.uid == userId;
+
+      match /savedIssues/{issueId} {
+        allow read, write: if request.auth.uid == userId;
+      }
+      match /notifications/{notificationId} {
+        allow read, create: if request.auth.uid == userId;
+        allow update, delete: if request.auth.uid == userId;
+      }
+    }
+
+    // ---------- Anonymous Issues ----------
+    match /anonymousIssues/{issueId} {
+      allow read: if true;
+      allow create: if request.auth != null;
+      allow update: if isAdmin() || isSuperAdminByUID();
+      allow delete: if isSuperAdminByUID();
+
+      match /votes/{userId} {
+        allow read, write: if request.auth.uid == userId;
+      }
+    }
+
+    // ---------- Profiled Issues ----------
+    match /profiledIssues/{issueId} {
+      allow read: if true;
+      allow create: if request.auth.uid == request.resource.data.reporterId;
+      allow update: if isAdmin() || isSuperAdminByUID();
+      allow delete: if request.auth.uid == resource.data.reporterId || isSuperAdminByUID();
+
+      match /votes/{userId} {
+        allow read, write: if request.auth.uid == userId;
+      }
+    }
+  }
+}
