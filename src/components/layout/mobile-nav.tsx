@@ -2,15 +2,15 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Home, MessageSquare, Search, Bookmark, User, Plus } from "lucide-react";
+import { Home, MessageSquare, Search, Bookmark, User, Plus, Bell } from "lucide-react";
 import { motion } from "framer-motion";
 import { cn } from "@/lib/utils";
 
 const navItems = [
+  { href: "/", icon: Home, label: "Home" },
   { href: "/explore", icon: Search, label: "Explore" },
-  { href: "/chats", icon: MessageSquare, label: "Chats" },
   { href: "/report-issue", icon: Plus, label: "Report" },
-  { href: "/saved", icon: Bookmark, label: "Saved" },
+  { href: "/notifications", icon: Bell, label: "Notifications" },
   { href: "/profile", icon: User, label: "Profile" },
 ];
 
