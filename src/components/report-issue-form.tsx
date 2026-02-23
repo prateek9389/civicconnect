@@ -23,26 +23,33 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { cn } from "@/lib/utils";
 import { IssueSubmittedDialog } from "./issue-submitted-dialog";
 import { states } from "@/lib/india-states-districts";
+import {
+    Select,
+    SelectContent,
+    SelectItem,
+    SelectTrigger,
+    SelectValue,
+} from "@/components/ui/select";
 import dynamic from 'next/dynamic';
 
 const Map = dynamic(() => import('./map'), {
-  ssr: false,
-  loading: () => <div className="h-full w-full bg-muted animate-pulse rounded-lg"></div>,
+    ssr: false,
+    loading: () => <div className="h-full w-full bg-muted animate-pulse rounded-lg"></div>,
 });
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/use-auth";
 
 const reportIssueSchema = z.object({
-  reportType: z.enum(["profiled", "anonymous"]),
-  reporterName: z.string().optional(),
-  reporterEmail: z.string().email().optional(),
-  state: z.string({ required_error: "Please select a state." }),
-  district: z.string({ required_error: "Please select a district." }),
-  streetAddress: z.string().min(10, "A detailed street address is required."),
-  cityInfo: z.string(),
-  title: z.string().min(5, "Title must be at least 5 characters long."),
-  description: z.string().min(20, "Description must be at least 20 characters long."),
-  images: z.array(z.any()).max(5, "You can upload a maximum of 5 images."),
+    reportType: z.enum(["profiled", "anonymous"]),
+    reporterName: z.string().optional(),
+    reporterEmail: z.string().email().optional(),
+    state: z.string({ required_error: "Please select a state." }),
+    district: z.string({ required_error: "Please select a district." }),
+    streetAddress: z.string().min(10, "A detailed street address is required."),
+    cityInfo: z.string(),
+    title: z.string().min(5, "Title must be at least 5 characters long."),
+    description: z.string().min(20, "Description must be at least 20 characters long."),
+    images: z.array(z.any()).max(5, "You can upload a maximum of 5 images."),
 });
 
 type ReportIssueFormValues = z.infer<typeof reportIssueSchema>;
@@ -63,7 +70,7 @@ export function ReportIssueForm() {
     const [hasLocationPermission, setHasLocationPermission] = useState(true);
     const [districts, setDistricts] = useState<string[]>([]);
     const router = useRouter();
-    
+
     const { toast } = useToast();
 
     const form = useForm<ReportIssueFormValues>({
@@ -76,54 +83,94 @@ export function ReportIssueForm() {
         },
     });
 
-     useEffect(() => {
+    useEffect(() => {
+        let isMounted = true;
+        const controller = new AbortController();
+
         if (navigator.geolocation) {
             navigator.geolocation.getCurrentPosition(
                 async (position) => {
-                    setHasLocationPermission(true);
-                    const newLocation = {
-                        lat: position.coords.latitude,
-                        lng: position.coords.longitude,
-                    };
-                    setLocation(newLocation);
-
                     try {
-                        const response = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${newLocation.lat}&lon=${newLocation.lng}`);
+                        if (!isMounted) return;
+
+                        setHasLocationPermission(true);
+                        const newLocation = {
+                            lat: position.coords.latitude,
+                            lng: position.coords.longitude,
+                        };
+                        setLocation(newLocation);
+
+                        const url = `https://nominatim.openstreetmap.org/reverse?format=json&lat=${newLocation.lat}&lon=${newLocation.lng}`;
+
+                        const response = await fetch(url, {
+                            signal: controller.signal,
+                            headers: {
+                                'Accept-Language': 'en',
+                            },
+                        });
+
+                        if (!response.ok) {
+                            throw new Error(`Nominatim API returned ${response.status}`);
+                        }
+
                         const data = await response.json();
-                        if (data && data.address) {
+
+                        if (isMounted && data && data.address) {
                             const { road, neighbourhood, suburb, city_district, city, state, postcode } = data.address;
-                            
+
                             const street = road || neighbourhood || suburb || "N/A";
-                            const cityInfo = `${city_district || city || ''}, ${state || ''}, ${postcode || ''}`;
+                            const cityParts = [city_district || city, state, postcode].filter(Boolean);
+                            const cityInfoValue = cityParts.join(", ");
 
                             form.setValue('streetAddress', street, { shouldValidate: true });
-                            form.setValue('cityInfo', cityInfo.trim(), { shouldValidate: true });
-                            
+                            form.setValue('cityInfo', cityInfoValue || "Unknown Location", { shouldValidate: true });
 
-                            const foundState = states.find(s => s.state === state);
+                            const stateName = state || "";
+                            const foundState = states.find(s =>
+                                s.state.toLowerCase() === stateName.toLowerCase() ||
+                                (stateName.toLowerCase().includes(s.state.toLowerCase()))
+                            );
+
                             if (foundState) {
                                 form.setValue('state', foundState.state, { shouldValidate: true });
                                 setDistricts(foundState.districts);
-                                const foundDistrict = foundState.districts.find(d => d === (city_district || city || suburb));
+
+                                // Try to match district
+                                const districtTarget = (city_district || city || suburb || "").toLowerCase();
+                                const foundDistrict = foundState.districts.find(d =>
+                                    d.toLowerCase() === districtTarget ||
+                                    districtTarget.includes(d.toLowerCase())
+                                );
+
                                 if (foundDistrict) {
                                     form.setValue('district', foundDistrict, { shouldValidate: true });
                                 }
                             }
                         }
-                    } catch (error) {
-                        console.error("Error fetching address:", error);
-                        toast({ variant: 'destructive', title: "Could not fetch address details."});
+                    } catch (error: any) {
+                        if (error.name === 'AbortError') return;
+                        if (isMounted) {
+                            console.warn("Gracefully handled location fetch error:", error.message || error);
+                        }
                     }
                 },
                 (error) => {
-                    console.error("Geolocation error:", error);
-                    setHasLocationPermission(false);
-                }
+                    if (isMounted) {
+                        console.error("Geolocation error:", error);
+                        setHasLocationPermission(false);
+                    }
+                },
+                { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 }
             );
         } else {
             setHasLocationPermission(false);
         }
-    }, [form, toast]);
+
+        return () => {
+            isMounted = false;
+            controller.abort();
+        };
+    }, []); // Only run once on mount to avoid loops
 
     useEffect(() => {
         if (reportType === 'profiled' && user) {
@@ -142,12 +189,12 @@ export function ReportIssueForm() {
             setImagePreviews(previews);
         }
     };
-    
+
     const uploadToCloudinary = async (file: File) => {
         const formData = new FormData();
         formData.append("file", file);
         formData.append("upload_preset", process.env.NEXT_PUBLIC_CLOUDINARY_UPLOAD_PRESET!);
-    
+
         const res = await fetch(`https://api.cloudinary.com/v1_1/${process.env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME}/image/upload`, {
             method: "POST",
             body: formData,
@@ -159,12 +206,13 @@ export function ReportIssueForm() {
     const removeImage = (index: number) => {
         const newImageFiles = imageFiles.filter((_, i) => i !== index);
         setImageFiles(newImageFiles);
-        
+
         const newImagePreviews = newImageFiles.map(file => URL.createObjectURL(file));
         setImagePreviews(newImagePreviews);
     };
-    
+
     const onSubmit = async (data: ReportIssueFormValues) => {
+        console.log("Attempting to submit form with data:", data);
         if (!hasLocationPermission || !location) {
             toast({
                 variant: 'destructive',
@@ -175,10 +223,12 @@ export function ReportIssueForm() {
         }
         setIsSubmitting(true);
         try {
+            console.log("Uploading images to Cloudinary...");
             const imageUrls = await Promise.all(
                 imageFiles.map(async (file) => uploadToCloudinary(file))
             );
-            
+            console.log("Images uploaded successfully:", imageUrls);
+
             const fullAddress = `${data.streetAddress}, ${data.cityInfo}`;
 
             let collectionName = 'anonymousIssues';
@@ -202,18 +252,20 @@ export function ReportIssueForm() {
                 issueData.avatarUrl = user.photoURL;
             }
 
+            console.log(`Adding document to ${collectionName}...`, issueData);
             const docRef = await addDoc(collection(db, collectionName), issueData);
+            console.log("Issue submitted successfully! Document ID:", docRef.id);
             setSubmissionData({ issueId: docRef.id, issueTitle: data.title });
 
         } catch (error) {
             console.error("Error submitting issue: ", error);
             toast({
                 title: "Submission Failed",
-                description: "There was an error submitting your issue. Please try again.",
+                description: error instanceof Error ? error.message : "There was an error submitting your issue. Please try again.",
                 variant: "destructive",
             });
         } finally {
-             setIsSubmitting(false);
+            setIsSubmitting(false);
         }
     };
 
@@ -234,7 +286,7 @@ export function ReportIssueForm() {
                 </CardHeader>
                 <CardContent>
                     {!hasLocationPermission && (
-                         <Alert variant="destructive" className="mb-6">
+                        <Alert variant="destructive" className="mb-6">
                             <MapPin className="h-4 w-4" />
                             <AlertTitle>Location Access Denied</AlertTitle>
                             <AlertDescription>
@@ -243,7 +295,7 @@ export function ReportIssueForm() {
                         </Alert>
                     )}
                     <div className="relative w-full h-64 mb-6 rounded-lg overflow-hidden border">
-                         {location ? (
+                        {location ? (
                             <Map location={location} path={[]} />
                         ) : (
                             <div className="w-full h-full bg-muted flex items-center justify-center text-muted-foreground">
@@ -295,15 +347,70 @@ export function ReportIssueForm() {
                         </AnimatePresence>
 
                         <div className="space-y-6">
-                             <div>
-                                <Label htmlFor="streetAddress">Street Address / Landmark</Label>
-                                <Textarea id="streetAddress" {...form.register("streetAddress")} placeholder="e.g., Near City Hall, Main Street" />
+                            <div>
+                                <Label htmlFor="streetAddress">Street Address / Landmark (Auto-detected)</Label>
+                                <Textarea id="streetAddress" {...form.register("streetAddress")} readOnly className="bg-muted cursor-not-allowed" />
                                 {form.formState.errors.streetAddress && <p className="text-sm font-medium text-destructive mt-2">{form.formState.errors.streetAddress.message}</p>}
                             </div>
 
-                             <div>
-                                <Label htmlFor="cityInfo">City, State, Pincode</Label>
-                                <Input id="cityInfo" {...form.register("cityInfo")} readOnly />
+                            <div>
+                                <Label htmlFor="cityInfo">City, State, Pincode (Auto-detected)</Label>
+                                <Input id="cityInfo" {...form.register("cityInfo")} readOnly className="bg-muted cursor-not-allowed" />
+                            </div>
+
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <div>
+                                    <Label htmlFor="state">State (Locked)</Label>
+                                    <Controller
+                                        name="state"
+                                        control={form.control}
+                                        render={({ field }) => (
+                                            <Select
+                                                onValueChange={field.onChange}
+                                                value={field.value}
+                                                disabled={true}
+                                            >
+                                                <SelectTrigger className="bg-muted cursor-not-allowed">
+                                                    <SelectValue placeholder="Detecting state..." />
+                                                </SelectTrigger>
+                                                <SelectContent>
+                                                    {states.map((s) => (
+                                                        <SelectItem key={s.state} value={s.state}>
+                                                            {s.state}
+                                                        </SelectItem>
+                                                    ))}
+                                                </SelectContent>
+                                            </Select>
+                                        )}
+                                    />
+                                    {form.formState.errors.state && <p className="text-sm font-medium text-destructive mt-2">{form.formState.errors.state.message}</p>}
+                                </div>
+                                <div>
+                                    <Label htmlFor="district">District (Locked)</Label>
+                                    <Controller
+                                        name="district"
+                                        control={form.control}
+                                        render={({ field }) => (
+                                            <Select
+                                                onValueChange={field.onChange}
+                                                value={field.value}
+                                                disabled={true}
+                                            >
+                                                <SelectTrigger className="bg-muted cursor-not-allowed">
+                                                    <SelectValue placeholder="Detecting district..." />
+                                                </SelectTrigger>
+                                                <SelectContent>
+                                                    {districts.map((d) => (
+                                                        <SelectItem key={d} value={d}>
+                                                            {d}
+                                                        </SelectItem>
+                                                    ))}
+                                                </SelectContent>
+                                            </Select>
+                                        )}
+                                    />
+                                    {form.formState.errors.district && <p className="text-sm font-medium text-destructive mt-2">{form.formState.errors.district.message}</p>}
+                                </div>
                             </div>
 
                             <div>
@@ -317,7 +424,7 @@ export function ReportIssueForm() {
                                 <Textarea id="description" {...form.register("description")} placeholder="Describe the issue in detail..." rows={5} />
                                 {form.formState.errors.description && <p className="text-sm font-medium text-destructive mt-2">{form.formState.errors.description.message}</p>}
                             </div>
-                            
+
                             <div>
                                 <Label htmlFor="images">Upload Images (Max 5)</Label>
                                 <div className="mt-2 flex items-center justify-center w-full">
@@ -327,7 +434,7 @@ export function ReportIssueForm() {
                                             <p className="mb-2 text-sm text-muted-foreground"><span className="font-semibold">Click to upload</span> or drag and drop</p>
                                             <p className="text-xs text-muted-foreground">PNG, JPG, GIF up to 10MB</p>
                                         </div>
-                                        <input id="dropzone-file" type="file" multiple accept="image/*" className="hidden" onChange={handleImageChange} disabled={imagePreviews.length >= 5}/>
+                                        <input id="dropzone-file" type="file" multiple accept="image/*" className="hidden" onChange={handleImageChange} disabled={imagePreviews.length >= 5} />
                                     </label>
                                 </div>
                                 {imagePreviews.length > 0 && (
@@ -346,7 +453,22 @@ export function ReportIssueForm() {
                             </div>
                         </div>
                         <motion.div whileTap={{ scale: 0.99 }}>
-                            <Button type="submit" size="lg" className="w-full font-bold text-lg" disabled={isSubmitting || !hasLocationPermission}>
+                            <Button
+                                type="submit"
+                                size="lg"
+                                className="w-full font-bold text-lg"
+                                disabled={isSubmitting || !hasLocationPermission}
+                                onClick={() => {
+                                    if (Object.keys(form.formState.errors).length > 0) {
+                                        console.log("Form validation errors:", form.formState.errors);
+                                        toast({
+                                            variant: 'destructive',
+                                            title: 'Check your inputs',
+                                            description: 'Please fill in all required fields and correct any errors.',
+                                        });
+                                    }
+                                }}
+                            >
                                 {isSubmitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                                 {isSubmitting ? "Submitting..." : "Submit Report"}
                             </Button>
